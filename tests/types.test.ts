@@ -18,6 +18,9 @@ import type {
   RestoreOptions,
   PruneResult,
   VerifyResult,
+  BackupTier,
+  GFSConfig,
+  TieredBackup,
 } from "../src/types";
 
 describe("types", () => {
@@ -432,6 +435,122 @@ describe("types", () => {
       expect(result.checksumValid).toBe(false);
       expect(result.databaseRestoreTest).toBeUndefined();
       expect(result.errors).toContain("Checksum mismatch for database.sql.gz");
+    });
+  });
+
+  describe("BackupTier", () => {
+    it("should accept all valid tier values", () => {
+      const daily: BackupTier = "daily";
+      const weekly: BackupTier = "weekly";
+      const monthly: BackupTier = "monthly";
+      const prunable: BackupTier = "prunable";
+
+      expect(daily).toBe("daily");
+      expect(weekly).toBe("weekly");
+      expect(monthly).toBe("monthly");
+      expect(prunable).toBe("prunable");
+    });
+  });
+
+  describe("GFSConfig", () => {
+    it("should have enabled flag and tier counts", () => {
+      const config: GFSConfig = {
+        enabled: true,
+        daily: 7,
+        weekly: 4,
+        monthly: 12,
+      };
+
+      expect(config.enabled).toBe(true);
+      expect(config.daily).toBe(7);
+      expect(config.weekly).toBe(4);
+      expect(config.monthly).toBe(12);
+    });
+
+    it("should allow disabled GFS", () => {
+      const config: GFSConfig = {
+        enabled: false,
+        daily: 7,
+        weekly: 4,
+        monthly: 12,
+      };
+
+      expect(config.enabled).toBe(false);
+    });
+  });
+
+  describe("TieredBackup", () => {
+    it("should combine manifest with tier info", () => {
+      const manifest: BackupManifest = {
+        id: "backup-2025-12-28",
+        timestamp: "2025-12-28T12:00:00Z",
+        version: "0.1.0",
+        database: { name: "db", size: 1000, checksum: "abc" },
+        directories: [],
+        encrypted: false,
+        status: "complete",
+        duration: 60,
+      };
+
+      const tiered: TieredBackup = {
+        manifest,
+        tier: "weekly",
+        tierReason: "week 2025-W52",
+      };
+
+      expect(tiered.manifest.id).toBe("backup-2025-12-28");
+      expect(tiered.tier).toBe("weekly");
+      expect(tiered.tierReason).toBe("week 2025-W52");
+    });
+
+    it("should support all tier values", () => {
+      const manifest: BackupManifest = {
+        id: "backup-1",
+        timestamp: "2025-12-28T12:00:00Z",
+        version: "0.1.0",
+        database: { name: "db", size: 1000, checksum: "abc" },
+        directories: [],
+        encrypted: false,
+        status: "complete",
+        duration: 60,
+      };
+
+      const daily: TieredBackup = { manifest, tier: "daily", tierReason: "newest 7" };
+      const weekly: TieredBackup = { manifest, tier: "weekly", tierReason: "week 2025-W52" };
+      const monthly: TieredBackup = { manifest, tier: "monthly", tierReason: "month 2025-12" };
+      const prunable: TieredBackup = { manifest, tier: "prunable", tierReason: "exceeds retention" };
+
+      expect(daily.tier).toBe("daily");
+      expect(weekly.tier).toBe("weekly");
+      expect(monthly.tier).toBe("monthly");
+      expect(prunable.tier).toBe("prunable");
+    });
+  });
+
+  describe("RetentionConfig with GFS", () => {
+    it("should accept optional gfs config", () => {
+      const config: RetentionConfig = {
+        days: 30,
+        minKeep: 7,
+        gfs: {
+          enabled: true,
+          daily: 7,
+          weekly: 4,
+          monthly: 12,
+        },
+      };
+
+      expect(config.gfs?.enabled).toBe(true);
+      expect(config.gfs?.daily).toBe(7);
+    });
+
+    it("should work without gfs config (backward compatible)", () => {
+      const config: RetentionConfig = {
+        days: 30,
+        minKeep: 7,
+      };
+
+      expect(config.gfs).toBeUndefined();
     });
   });
 });

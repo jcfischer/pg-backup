@@ -13,6 +13,16 @@ export interface DatabaseConfig {
 export interface RetentionConfig {
   days: number;
   minKeep: number;
+  gfs?: GFSConfig;
+}
+
+export type BackupTier = "daily" | "weekly" | "monthly" | "prunable";
+
+export interface GFSConfig {
+  enabled: boolean;
+  daily: number;
+  weekly: number;
+  monthly: number;
 }
 
 export interface RsyncOffsiteConfig {
@@ -110,4 +120,10 @@ export interface VerifyResult {
   checksumValid: boolean;
   databaseRestoreTest?: boolean;
   errors: string[];
+}
+
+export interface TieredBackup {
+  manifest: BackupManifest;
+  tier: BackupTier;
+  tierReason: string;
 }
