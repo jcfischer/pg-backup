@@ -1,0 +1,58 @@
+---
+# Configure pg-backup environment
+
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/pg-backup
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Deploy pg-backup environment configuration
+  ansible.builtin.template:
+    src: pg-backup.env.j2
+    dest: /etc/pg-backup/pg-backup.env
+    owner: root
+    group: "{{ pg_backup_group }}"
+    mode: '0640'
+  become: true
+  notify: Restart pg-backup timer
+
+- name: Setup rsync SSH key (when using rsync offsite)
+  when: pg_backup_offsite_type == 'rsync'
+  block:
+    - name: Ensure .ssh directory exists for postgres user
+      ansible.builtin.file:
+        path: "/var/lib/postgresql/.ssh"
+        state: directory
+        owner: "{{ pg_backup_user }}"
+        group: "{{ pg_backup_group }}"
+        mode: '0700'
+      become: true
+
+    - name: Generate SSH key for rsync backups
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519
+          -f {{ pg_backup_rsync_ssh_key_path }}
+          -N ""
+          -C "pg-backup@{{ ansible_hostname }}"
+        creates: "{{ pg_backup_rsync_ssh_key_path }}"
+      become: true
+      become_user: "{{ pg_backup_user }}"
+
+    - name: Display SSH public key for rsync setup
+      ansible.builtin.command:
+        cmd: cat {{ pg_backup_rsync_ssh_key_path }}.pub
+      register: ssh_pubkey
+      changed_when: false
+      become: true
+
+    - name: Show SSH public key
+      ansible.builtin.debug:
+        msg: |
+          Add this SSH key to {{ pg_backup_rsync_user }}@{{ pg_backup_rsync_host }}:
+          {{ ssh_pubkey.stdout }}
+      when: ssh_pubkey.stdout | length > 0

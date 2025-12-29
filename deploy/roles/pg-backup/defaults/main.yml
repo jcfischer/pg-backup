@@ -1,0 +1,68 @@
+---
+# pg-backup Ansible Role - Default Variables
+# Override these in your playbook or group_vars
+
+# Installation
+pg_backup_version: "main"  # Git branch/tag to deploy
+pg_backup_repo: "https://github.com/jcfischer/pg-backup.git"
+pg_backup_install_dir: "/opt/pg-backup"
+pg_backup_bin_path: "/usr/local/bin/pg-backup"
+
+# Backup storage
+pg_backup_dir: "/var/lib/pg-backup/backups"
+pg_backup_user: "postgres"
+pg_backup_group: "postgres"
+
+# Database connection (required)
+pg_backup_db_name: ""
+pg_backup_db_host: "localhost"
+pg_backup_db_port: 5432
+pg_backup_db_user: "postgres"
+pg_backup_db_password: ""  # Leave empty to use .pgpass or peer auth
+
+# Directories to backup (optional, comma-separated)
+pg_backup_directories: ""
+
+# Retention policy
+pg_backup_retention_days: 30
+pg_backup_retention_min_keep: 7
+
+# Encryption (optional)
+pg_backup_encryption_enabled: false
+pg_backup_encryption_passphrase: ""
+
+# Off-site sync type: none, s3, rsync
+pg_backup_offsite_type: "none"
+
+# S3 configuration (when offsite_type is s3)
+pg_backup_s3_bucket: ""
+pg_backup_s3_region: "eu-central-1"
+pg_backup_s3_access_key_id: ""
+pg_backup_s3_secret_access_key: ""
+pg_backup_s3_endpoint: ""
+
+# Rsync configuration (when offsite_type is rsync)
+pg_backup_rsync_host: ""
+pg_backup_rsync_user: "backup"
+pg_backup_rsync_path: "/backups/postgres"
+pg_backup_rsync_ssh_key_path: "/var/lib/postgresql/.ssh/backup_key"
+
+# Email alerts (optional)
+pg_backup_alert_enabled: false
+pg_backup_alert_smtp_host: ""
+pg_backup_alert_smtp_port: 587
+pg_backup_alert_smtp_secure: false
+pg_backup_alert_smtp_user: ""
+pg_backup_alert_smtp_password: ""
+pg_backup_alert_from: ""
+pg_backup_alert_to: ""
+pg_backup_alert_subject_prefix: "[BACKUP]"
+
+# Systemd timer schedule (default: daily at 03:00)
+pg_backup_timer_oncalendar: "*-*-* 03:00:00"
+pg_backup_timer_randomized_delay: "1800"  # 30 minutes
+
+# Dependencies
+pg_backup_install_bun: true
+pg_backup_install_postgresql_client: true
+pg_backup_postgresql_version: "16"

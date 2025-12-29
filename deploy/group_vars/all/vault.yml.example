@@ -1,0 +1,20 @@
+---
+# Example vault file for sensitive variables
+#
+# Create your vault:
+#   ansible-vault create group_vars/all/vault.yml
+#
+# Copy these variables and set your values:
+
+# Backup encryption passphrase
+vault_backup_passphrase: "your-secure-passphrase"
+
+# S3 credentials
+vault_s3_access_key: "AKIAXXXXXXXXXXXXXXXX"
+vault_s3_secret_key: "your-secret-key"
+
+# SMTP password for alerts
+vault_smtp_password: "your-smtp-password"
+
+# Database password (if not using .pgpass)
+vault_db_password: "your-db-password"

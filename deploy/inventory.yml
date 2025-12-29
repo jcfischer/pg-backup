@@ -1,0 +1,23 @@
+---
+# Example inventory for pg-backup deployment
+#
+# Copy this file and customize for your environment
+
+all:
+  children:
+    database_servers:
+      hosts:
+        db1.example.com:
+          ansible_user: root
+          # Per-host overrides
+          pg_backup_db_name: "app_production"
+
+        db2.example.com:
+          ansible_user: deploy
+          ansible_become: true
+          pg_backup_db_name: "analytics"
+
+      vars:
+        # Group-wide defaults
+        pg_backup_retention_days: 30
+        pg_backup_retention_min_keep: 7

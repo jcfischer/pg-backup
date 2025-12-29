@@ -1,0 +1,24 @@
+---
+# pg-backup Ansible Role - Main Tasks
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - pg_backup_db_name | length > 0
+    fail_msg: "pg_backup_db_name is required"
+    quiet: true
+
+- name: Include dependency installation tasks
+  ansible.builtin.include_tasks: dependencies.yml
+
+- name: Include pg-backup installation tasks
+  ansible.builtin.include_tasks: install.yml
+
+- name: Include configuration tasks
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Include systemd tasks
+  ansible.builtin.include_tasks: systemd.yml
+
+- name: Include verification tasks
+  ansible.builtin.include_tasks: verify.yml

@@ -1,0 +1,19 @@
+[Unit]
+Description=Daily PostgreSQL Backup Timer
+Documentation=https://github.com/user/pg-backup
+
+[Timer]
+# Run daily at 3:00 AM
+OnCalendar=*-*-* 03:00:00
+
+# Random delay up to 30 minutes to avoid thundering herd
+RandomizedDelaySec=1800
+
+# Catch up if missed (e.g., server was down)
+Persistent=true
+
+# Accuracy window
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

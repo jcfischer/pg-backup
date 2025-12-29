@@ -1,0 +1,48 @@
+---
+# Example playbook to deploy pg-backup
+#
+# Usage:
+#   ansible-playbook -i inventory.yml playbook.yml
+#
+# With vault for secrets:
+#   ansible-playbook -i inventory.yml playbook.yml --ask-vault-pass
+
+- name: Deploy pg-backup to database servers
+  hosts: database_servers
+  become: true
+
+  vars:
+    # Required: Database to backup
+    pg_backup_db_name: "production"
+    pg_backup_db_host: "localhost"
+    pg_backup_db_user: "postgres"
+
+    # Optional: Additional directories to backup
+    pg_backup_directories: "/var/www/uploads,/etc/myapp"
+
+    # Optional: Retention policy
+    pg_backup_retention_days: 30
+    pg_backup_retention_min_keep: 7
+
+    # Optional: Encryption (uncomment to enable)
+    # pg_backup_encryption_enabled: true
+    # pg_backup_encryption_passphrase: "{{ vault_backup_passphrase }}"
+
+    # Optional: S3 off-site sync (uncomment to enable)
+    # pg_backup_offsite_type: "s3"
+    # pg_backup_s3_bucket: "my-backups"
+    # pg_backup_s3_region: "eu-central-1"
+    # pg_backup_s3_access_key_id: "{{ vault_s3_access_key }}"
+    # pg_backup_s3_secret_access_key: "{{ vault_s3_secret_key }}"
+
+    # Optional: Email alerts (uncomment to enable)
+    # pg_backup_alert_enabled: true
+    # pg_backup_alert_smtp_host: "smtp.example.com"
+    # pg_backup_alert_smtp_port: 587
+    # pg_backup_alert_smtp_user: "alerts@example.com"
+    # pg_backup_alert_smtp_password: "{{ vault_smtp_password }}"
+    # pg_backup_alert_from: "backup@example.com"
+    # pg_backup_alert_to: "admin@example.com"
+
+  roles:
+    - pg-backup

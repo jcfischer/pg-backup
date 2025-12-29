@@ -1,0 +1,56 @@
+---
+# Install pg-backup from source
+
+- name: Create installation directory
+  ansible.builtin.file:
+    path: "{{ pg_backup_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Clone/update pg-backup repository
+  ansible.builtin.git:
+    repo: "{{ pg_backup_repo }}"
+    dest: "{{ pg_backup_install_dir }}"
+    version: "{{ pg_backup_version }}"
+    force: true
+  become: true
+  register: git_clone
+
+- name: Install npm dependencies
+  ansible.builtin.command:
+    cmd: /usr/local/bin/bun install --frozen-lockfile
+    chdir: "{{ pg_backup_install_dir }}"
+  become: true
+  when: git_clone.changed
+  changed_when: true
+
+- name: Build pg-backup binary
+  ansible.builtin.command:
+    cmd: /usr/local/bin/bun build src/cli.ts --compile --outfile pg-backup
+    chdir: "{{ pg_backup_install_dir }}"
+  become: true
+  when: git_clone.changed
+  changed_when: true
+
+- name: Install pg-backup binary to system path
+  ansible.builtin.copy:
+    src: "{{ pg_backup_install_dir }}/pg-backup"
+    dest: "{{ pg_backup_bin_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  notify: Restart pg-backup timer
+
+- name: Create backup directory
+  ansible.builtin.file:
+    path: "{{ pg_backup_dir }}"
+    state: directory
+    owner: "{{ pg_backup_user }}"
+    group: "{{ pg_backup_group }}"
+    mode: '0750'
+  become: true

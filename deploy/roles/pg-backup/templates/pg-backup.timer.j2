@@ -1,0 +1,19 @@
+[Unit]
+Description=Daily PostgreSQL Backup Timer
+Documentation=https://github.com/jcfischer/pg-backup
+
+[Timer]
+# Schedule: {{ pg_backup_timer_oncalendar }}
+OnCalendar={{ pg_backup_timer_oncalendar }}
+
+# Random delay to avoid thundering herd
+RandomizedDelaySec={{ pg_backup_timer_randomized_delay }}
+
+# Catch up if missed (e.g., server was down)
+Persistent=true
+
+# Accuracy window
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

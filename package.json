@@ -1,0 +1,33 @@
+{
+  "name": "pg-backup",
+  "version": "0.1.0",
+  "description": "Generic PostgreSQL database and directory backup tool with encryption, off-site sync, and alerting",
+  "type": "module",
+  "bin": {
+    "pg-backup": "./src/cli.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "test": "bun test",
+    "build": "bun build src/cli.ts --outfile=dist/pg-backup --target=bun --compile"
+  },
+  "keywords": [
+    "postgresql",
+    "backup",
+    "restore",
+    "database",
+    "devops"
+  ],
+  "author": "Jens-Christian Fischer",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/nodemailer": "^7.0.4",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.958.0",
+    "commander": "^14.0.2",
+    "nodemailer": "^7.0.12"
+  }
+}

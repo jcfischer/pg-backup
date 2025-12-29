@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+pg-backup
+*.exe
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+/etc/pg-backup/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Backup files (the actual backups, not the tool)
+/backups/
+*.sql.gz
+*.tar.gz
+*.gpg
+
+# Ansible vault files (but not examples)
+deploy/group_vars/*/vault.yml
+!deploy/group_vars/*/vault.yml.example

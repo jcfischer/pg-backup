@@ -1,0 +1,20 @@
+---
+# pg-backup Ansible Role - Handlers
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: Restart pg-backup timer
+  ansible.builtin.systemd:
+    name: pg-backup.timer
+    state: restarted
+    enabled: true
+  become: true
+
+- name: Restart pg-backup service
+  ansible.builtin.systemd:
+    name: pg-backup.service
+    state: started
+  become: true
