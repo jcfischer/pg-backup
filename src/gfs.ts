@@ -78,19 +78,65 @@ export function classifyBackups(
   );
 
   const result: TieredBackup[] = [];
+  const assigned = new Set<string>(); // Track which manifests are assigned
 
   // Phase 1: Assign daily tier to newest N backups
-  for (let i = 0; i < sorted.length; i++) {
+  for (let i = 0; i < Math.min(config.daily, sorted.length); i++) {
     const manifest = sorted[i];
+    result.push({
+      manifest,
+      tier: "daily",
+      tierReason: `newest ${config.daily}`,
+    });
+    assigned.add(manifest.id);
+  }
 
-    if (i < config.daily) {
-      result.push({
-        manifest,
-        tier: "daily",
-        tierReason: `newest ${config.daily}`,
-      });
-    } else {
-      // Placeholder for further classification (weekly/monthly/prunable)
+  // Phase 2: Assign weekly tier to oldest backup in each week (up to weekly limit)
+  // Get remaining (non-daily) backups, sorted oldest first for weekly selection
+  const remaining = sorted.filter((m) => !assigned.has(m.id));
+  const weekGroups = new Map<string, BackupManifest[]>();
+
+  for (const manifest of remaining) {
+    const date = new Date(manifest.timestamp);
+    const { year, week } = getISOWeek(date);
+    const weekKey = `${year}-W${week.toString().padStart(2, "0")}`;
+
+    if (!weekGroups.has(weekKey)) {
+      weekGroups.set(weekKey, []);
+    }
+    weekGroups.get(weekKey)!.push(manifest);
+  }
+
+  // For each week, find the oldest backup (candidate for weekly promotion)
+  const weeklyCandidate: Array<{ weekKey: string; manifest: BackupManifest }> = [];
+  for (const [weekKey, backups] of weekGroups) {
+    // Sort by timestamp ascending (oldest first)
+    const sortedByTime = [...backups].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    weeklyCandidate.push({ weekKey, manifest: sortedByTime[0] });
+  }
+
+  // Sort weekly candidates by week (newest weeks first for retention priority)
+  weeklyCandidate.sort((a, b) => b.weekKey.localeCompare(a.weekKey));
+
+  // Assign weekly tier up to the limit
+  let weeklyAssigned = 0;
+  for (const { weekKey, manifest } of weeklyCandidate) {
+    if (weeklyAssigned >= config.weekly) break;
+
+    result.push({
+      manifest,
+      tier: "weekly",
+      tierReason: `week ${weekKey}`,
+    });
+    assigned.add(manifest.id);
+    weeklyAssigned++;
+  }
+
+  // Phase 3: Remaining backups are prunable (for now - monthly will be added later)
+  for (const manifest of sorted) {
+    if (!assigned.has(manifest.id)) {
       result.push({
         manifest,
         tier: "prunable",
@@ -98,6 +144,13 @@ export function classifyBackups(
       });
     }
   }
+
+  // Sort result to match original sort order (newest first)
+  result.sort(
+    (a, b) =>
+      new Date(b.manifest.timestamp).getTime() -
+      new Date(a.manifest.timestamp).getTime()
+  );
 
   return result;
 }

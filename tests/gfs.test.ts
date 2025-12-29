@@ -186,5 +186,71 @@ describe("gfs", () => {
         expect(result).toEqual([]);
       });
     });
+
+    describe("weekly tier promotion", () => {
+      it("should promote oldest backup in each week to weekly tier", () => {
+        // Create backups across 3 different weeks
+        // Week 52 of 2025: Dec 22-28
+        // Week 1 of 2026: Dec 29 - Jan 4
+        const manifests = [
+          createManifest("backup-w1-1", "2025-12-29T12:00:00Z"), // Week 1/2026 - newest
+          createManifest("backup-w52-3", "2025-12-28T12:00:00Z"), // Week 52/2025
+          createManifest("backup-w52-2", "2025-12-25T12:00:00Z"), // Week 52/2025
+          createManifest("backup-w52-1", "2025-12-22T12:00:00Z"), // Week 52/2025 - oldest in week
+          createManifest("backup-w51-2", "2025-12-21T12:00:00Z"), // Week 51/2025
+          createManifest("backup-w51-1", "2025-12-15T12:00:00Z"), // Week 51/2025 - oldest in week
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 4, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        // First should be daily
+        expect(result[0].tier).toBe("daily");
+        expect(result[0].manifest.id).toBe("backup-w1-1");
+
+        // Oldest in week 52 should be weekly
+        const w52Oldest = result.find((r) => r.manifest.id === "backup-w52-1");
+        expect(w52Oldest?.tier).toBe("weekly");
+        expect(w52Oldest?.tierReason).toContain("week");
+
+        // Oldest in week 51 should be weekly
+        const w51Oldest = result.find((r) => r.manifest.id === "backup-w51-1");
+        expect(w51Oldest?.tier).toBe("weekly");
+
+        // Others in same weeks should be prunable
+        const w52Mid = result.find((r) => r.manifest.id === "backup-w52-2");
+        expect(w52Mid?.tier).toBe("prunable");
+      });
+
+      it("should not exceed weekly retention count", () => {
+        // 10 backups across 10 weeks, but only keep 2 weekly
+        const manifests: BackupManifest[] = [];
+        for (let i = 0; i < 10; i++) {
+          const date = new Date("2025-06-01T12:00:00Z");
+          date.setDate(date.getDate() - i * 7); // One per week
+          manifests.push(createManifest(`backup-${i}`, date.toISOString()));
+        }
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 2, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        const weeklyCount = result.filter((r) => r.tier === "weekly").length;
+        expect(weeklyCount).toBe(2);
+      });
+
+      it("should use oldest backup in week for promotion", () => {
+        // Multiple backups in same week
+        const manifests = [
+          createManifest("monday-late", "2025-12-22T18:00:00Z"),
+          createManifest("monday-early", "2025-12-22T06:00:00Z"), // Same day, earlier - should be promoted
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 0, weekly: 4, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        const promoted = result.find((r) => r.tier === "weekly");
+        expect(promoted?.manifest.id).toBe("monday-early");
+      });
+    });
   });
 });
