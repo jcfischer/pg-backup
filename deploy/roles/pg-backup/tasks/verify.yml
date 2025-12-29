@@ -33,14 +33,10 @@
 
 - name: Test backup configuration (dry run)
   ansible.builtin.shell: |
-    set -a
-    source /etc/pg-backup/pg-backup.env
-    set +a
-    {{ pg_backup_bin_path }} status --backup-dir {{ pg_backup_dir }} 2>&1 || true
+    sudo -u {{ pg_backup_user }} bash -c 'source /etc/pg-backup/pg-backup.env && {{ pg_backup_bin_path }} status --backup-dir {{ pg_backup_dir }}' 2>&1 || true
   register: backup_test
   changed_when: false
   become: true
-  become_user: "{{ pg_backup_user }}"
 
 - name: Display backup status
   ansible.builtin.debug:

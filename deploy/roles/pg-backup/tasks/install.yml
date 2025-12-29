@@ -19,20 +19,25 @@
   become: true
   register: git_clone
 
+- name: Check if pg-backup binary exists
+  ansible.builtin.stat:
+    path: "{{ pg_backup_bin_path }}"
+  register: pg_backup_binary
+
 - name: Install npm dependencies
   ansible.builtin.command:
-    cmd: /usr/local/bin/bun install --frozen-lockfile
+    cmd: "{{ pg_backup_bun_path | default('/usr/local/bin/bun') }} install --frozen-lockfile"
     chdir: "{{ pg_backup_install_dir }}"
   become: true
-  when: git_clone.changed
+  when: git_clone.changed or not pg_backup_binary.stat.exists
   changed_when: true
 
 - name: Build pg-backup binary
   ansible.builtin.command:
-    cmd: /usr/local/bin/bun build src/cli.ts --compile --outfile pg-backup
+    cmd: "{{ pg_backup_bun_path | default('/usr/local/bin/bun') }} build src/cli.ts --compile --outfile pg-backup"
     chdir: "{{ pg_backup_install_dir }}"
   become: true
-  when: git_clone.changed
+  when: git_clone.changed or not pg_backup_binary.stat.exists
   changed_when: true
 
 - name: Install pg-backup binary to system path
