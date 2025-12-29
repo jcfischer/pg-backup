@@ -11,6 +11,7 @@ import { runRestore, RestoreService } from "./restore-service";
 import { listManifests, getLatestManifest, loadManifest, backupExists } from "./manifest";
 import { verifyArchive } from "./directories";
 import { calculateChecksum } from "./manifest";
+import { getBackupsToPrune, classifyBackups } from "./gfs";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -135,10 +136,22 @@ program
   .option("--json", "Output as JSON")
   .action(async (options) => {
     try {
+      // Only load config if needed (for backup-dir or GFS settings)
       let backupDir = options.backupDir;
+      let gfsConfig: { enabled: boolean; daily: number; weekly: number; monthly: number } | undefined;
+
       if (!backupDir) {
         const config = await loadConfig();
         backupDir = config.backupDir;
+        gfsConfig = config.retention.gfs;
+      } else {
+        // Try to load config for GFS settings, but don't fail if DB_NAME isn't set
+        try {
+          const config = await loadConfig();
+          gfsConfig = config.retention.gfs;
+        } catch {
+          // Config loading failed (e.g., no DB_NAME) - continue without GFS
+        }
       }
 
       const manifests = await listManifests(backupDir);
@@ -148,8 +161,26 @@ program
         return;
       }
 
+      // Build tier map if GFS is enabled
+      const tierMap = new Map<string, { tier: string; reason: string }>();
+      if (gfsConfig?.enabled) {
+        const classified = classifyBackups(manifests, gfsConfig);
+        for (const c of classified) {
+          tierMap.set(c.manifest.id, { tier: c.tier, reason: c.tierReason });
+        }
+      }
+
       if (options.json) {
-        console.log(JSON.stringify(manifests, null, 2));
+        // Include tier info in JSON output when GFS is enabled
+        if (gfsConfig?.enabled) {
+          const withTiers = manifests.map((m) => ({
+            ...m,
+            gfsTier: tierMap.get(m.id),
+          }));
+          console.log(JSON.stringify(withTiers, null, 2));
+        } else {
+          console.log(JSON.stringify(manifests, null, 2));
+        }
         return;
       }
 
@@ -162,6 +193,13 @@ program
         console.log(`   Database: ${manifest.database.name} (${formatBytes(manifest.database.size)})`);
         console.log(`   Encrypted: ${manifest.encrypted ? "yes" : "no"}`);
         console.log(`   Directories: ${manifest.directories.length}`);
+
+        // Show GFS tier info when enabled
+        const tierInfo = tierMap.get(manifest.id);
+        if (tierInfo) {
+          const tierIcon = tierInfo.tier === "daily" ? "📅" : tierInfo.tier === "weekly" ? "📆" : tierInfo.tier === "monthly" ? "🗓️" : "🗑️";
+          console.log(`   Tier: ${tierIcon} ${tierInfo.tier} (${tierInfo.reason})`);
+        }
         console.log("");
       }
     } catch (error) {
@@ -298,7 +336,7 @@ program
     try {
       const config = await loadConfig();
       const backupDir = options.backupDir || config.backupDir;
-      const keepCount = options.keep || config.retention.minKeep;
+      const keepCount = options.keep ?? config.retention.minKeep;
       const retentionDays = options.days || config.retention.days;
 
       const manifests = await listManifests(backupDir);
@@ -308,25 +346,41 @@ program
         return;
       }
 
-      const now = Date.now();
-      const cutoffDate = now - retentionDays * 24 * 60 * 60 * 1000;
+      let toDelete: Array<{ manifest: typeof manifests[0]; reason?: string }> = [];
+      let toKeep: typeof manifests = [];
 
-      // Sort by date (newest first) - already sorted by listManifests
-      const toKeep: typeof manifests = [];
-      const toDelete: typeof manifests = [];
+      // Use GFS retention when enabled, otherwise use age-based retention
+      if (config.retention.gfs?.enabled) {
+        // GFS (Grandfather-Father-Son) tiered retention
+        const backupsToPrune = getBackupsToPrune(
+          manifests,
+          config.retention.gfs,
+          keepCount
+        );
+        toDelete = backupsToPrune.map((t) => ({ manifest: t.manifest, reason: t.tierReason }));
+        toKeep = manifests.filter((m) => !toDelete.some((d) => d.manifest.id === m.id));
 
-      for (const manifest of manifests) {
-        const manifestDate = new Date(manifest.timestamp).getTime();
+        if (options.verbose) {
+          console.log(`Using GFS retention (daily=${config.retention.gfs.daily}, weekly=${config.retention.gfs.weekly}, monthly=${config.retention.gfs.monthly})`);
+        }
+      } else {
+        // Age-based retention (legacy behavior)
+        const now = Date.now();
+        const cutoffDate = now - retentionDays * 24 * 60 * 60 * 1000;
 
-        if (toKeep.length < keepCount) {
-          // Always keep minimum number
-          toKeep.push(manifest);
-        } else if (manifestDate >= cutoffDate) {
-          // Keep if within retention period
-          toKeep.push(manifest);
-        } else {
-          // Delete if older than retention and we have enough
-          toDelete.push(manifest);
+        for (const manifest of manifests) {
+          const manifestDate = new Date(manifest.timestamp).getTime();
+
+          if (toKeep.length < keepCount) {
+            // Always keep minimum number
+            toKeep.push(manifest);
+          } else if (manifestDate >= cutoffDate) {
+            // Keep if within retention period
+            toKeep.push(manifest);
+          } else {
+            // Delete if older than retention and we have enough
+            toDelete.push({ manifest, reason: `older than ${retentionDays} days` });
+          }
         }
       }
 
@@ -337,9 +391,10 @@ program
 
       console.log(`${options.dryRun ? "[DRY RUN] " : ""}Pruning ${toDelete.length} backup(s):`);
 
-      for (const manifest of toDelete) {
+      for (const { manifest, reason } of toDelete) {
         const date = new Date(manifest.timestamp).toLocaleString();
-        console.log(`  ${manifest.id} (${date})`);
+        const reasonSuffix = reason ? ` - ${reason}` : "";
+        console.log(`  ${manifest.id} (${date})${reasonSuffix}`);
 
         if (!options.dryRun) {
           const backupPath = join(backupDir, manifest.id);

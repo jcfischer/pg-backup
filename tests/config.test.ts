@@ -81,6 +81,76 @@ describe("config", () => {
       expect(config.retention.minKeep).toBe(14);
     });
 
+    it("should load GFS config from env when enabled", () => {
+      process.env.PG_BACKUP_DB_NAME = "testdb";
+      process.env.PG_BACKUP_GFS_ENABLED = "true";
+      process.env.PG_BACKUP_GFS_DAILY = "14";
+      process.env.PG_BACKUP_GFS_WEEKLY = "8";
+      process.env.PG_BACKUP_GFS_MONTHLY = "24";
+
+      const config = loadConfig();
+
+      expect(config.retention.gfs).toBeDefined();
+      expect(config.retention.gfs?.enabled).toBe(true);
+      expect(config.retention.gfs?.daily).toBe(14);
+      expect(config.retention.gfs?.weekly).toBe(8);
+      expect(config.retention.gfs?.monthly).toBe(24);
+    });
+
+    it("should use GFS defaults when enabled without specific counts", () => {
+      process.env.PG_BACKUP_DB_NAME = "testdb";
+      process.env.PG_BACKUP_GFS_ENABLED = "true";
+
+      const config = loadConfig();
+
+      expect(config.retention.gfs).toBeDefined();
+      expect(config.retention.gfs?.enabled).toBe(true);
+      expect(config.retention.gfs?.daily).toBe(7);
+      expect(config.retention.gfs?.weekly).toBe(4);
+      expect(config.retention.gfs?.monthly).toBe(12);
+    });
+
+    it("should not include GFS config when not enabled", () => {
+      process.env.PG_BACKUP_DB_NAME = "testdb";
+      // GFS_ENABLED not set or false
+
+      const config = loadConfig();
+
+      expect(config.retention.gfs).toBeUndefined();
+    });
+
+    it("should not include GFS config when explicitly disabled", () => {
+      process.env.PG_BACKUP_DB_NAME = "testdb";
+      process.env.PG_BACKUP_GFS_ENABLED = "false";
+
+      const config = loadConfig();
+
+      expect(config.retention.gfs).toBeUndefined();
+    });
+
+    it("should maintain backward compatibility - existing config works without GFS", () => {
+      // Simulate existing user's env - only traditional retention settings
+      process.env.PG_BACKUP_DB_NAME = "production";
+      process.env.PG_BACKUP_DB_HOST = "db.example.com";
+      process.env.PG_BACKUP_DIR = "/backups";
+      process.env.PG_BACKUP_RETENTION_DAYS = "60";
+      process.env.PG_BACKUP_MIN_KEEP = "14";
+      // No GFS_ENABLED set
+
+      const config = loadConfig();
+
+      // Traditional retention still works
+      expect(config.retention.days).toBe(60);
+      expect(config.retention.minKeep).toBe(14);
+
+      // GFS is not activated
+      expect(config.retention.gfs).toBeUndefined();
+
+      // Config should validate without errors
+      const errors = validateConfig(config);
+      expect(errors).toEqual([]);
+    });
+
     it("should load encryption key from env", () => {
       process.env.PG_BACKUP_DB_NAME = "testdb";
       process.env.PG_BACKUP_ENCRYPTION_KEY = "mysecretkey";
@@ -256,6 +326,163 @@ describe("config", () => {
 
       expect(errors).toContain("S3 endpoint is required (PG_BACKUP_S3_ENDPOINT)");
       expect(errors).toContain("S3 bucket is required (PG_BACKUP_S3_BUCKET)");
+    });
+
+    it("should return error when GFS daily is negative", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          gfs: {
+            enabled: true,
+            daily: -1,
+            weekly: 4,
+            monthly: 12,
+          },
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors).toContain("GFS daily must be a non-negative integer");
+    });
+
+    it("should return error when GFS weekly is negative", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          gfs: {
+            enabled: true,
+            daily: 7,
+            weekly: -2,
+            monthly: 12,
+          },
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors).toContain("GFS weekly must be a non-negative integer");
+    });
+
+    it("should return error when GFS monthly is negative", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          gfs: {
+            enabled: true,
+            daily: 7,
+            weekly: 4,
+            monthly: -3,
+          },
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors).toContain("GFS monthly must be a non-negative integer");
+    });
+
+    it("should not return GFS errors when GFS is not enabled", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          // No GFS config
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors.filter((e) => e.includes("GFS"))).toEqual([]);
+    });
+
+    it("should accept valid GFS config", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          gfs: {
+            enabled: true,
+            daily: 7,
+            weekly: 4,
+            monthly: 12,
+          },
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors).toEqual([]);
+    });
+
+    it("should accept GFS config with zero values", () => {
+      const config: BackupConfig = {
+        database: {
+          host: "localhost",
+          port: 5432,
+          name: "testdb",
+          user: "postgres",
+        },
+        directories: [],
+        backupDir: "/var/backups",
+        retention: {
+          days: 30,
+          minKeep: 7,
+          gfs: {
+            enabled: true,
+            daily: 0,
+            weekly: 0,
+            monthly: 0,
+          },
+        },
+      };
+
+      const errors = validateConfig(config);
+
+      expect(errors).toEqual([]);
     });
   });
 });

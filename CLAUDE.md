@@ -4,7 +4,7 @@ Generic PostgreSQL database and directory backup tool with off-site sync.
 
 ## Status
 
-**204 tests passing** (`bun test --randomize`)
+**261 tests passing** (`bun test --randomize`)
 
 ## Features
 
@@ -12,7 +12,8 @@ Generic PostgreSQL database and directory backup tool with off-site sync.
 - Directory backup via tar + gzip
 - GPG symmetric encryption (AES-256)
 - Off-site sync via rsync + SSH or S3-compatible storage
-- Retention policy with automatic pruning
+- Retention policy with automatic pruning (age-based or GFS tiered)
+- GFS (Grandfather-Father-Son) tiered retention with daily, weekly, monthly tiers
 - Email alerts on success/failure
 - Backup verification with checksum validation
 - Easy restore with selective components
@@ -65,9 +66,17 @@ PG_BACKUP_DIRECTORIES=/var/www/uploads,/etc/myapp
 PG_BACKUP_ENCRYPTION_ENABLED=true
 PG_BACKUP_ENCRYPTION_PASSPHRASE=your-secret-passphrase
 
-# Optional: Retention policy
+# Optional: Retention policy (age-based - default)
 PG_BACKUP_RETENTION_DAYS=30    # Delete backups older than N days
-PG_BACKUP_RETENTION_MIN_KEEP=7  # Always keep at least N backups
+PG_BACKUP_RETENTION_MIN_KEEP=7  # Always keep at least N backups (safety floor)
+
+# Optional: GFS (Grandfather-Father-Son) tiered retention
+# When enabled, overrides age-based retention with intelligent tiering
+PG_BACKUP_GFS_ENABLED=true      # Enable GFS retention
+PG_BACKUP_GFS_DAILY=7           # Keep 7 most recent backups (default: 7)
+PG_BACKUP_GFS_WEEKLY=4          # Keep 4 weekly backups (oldest in each week, default: 4)
+PG_BACKUP_GFS_MONTHLY=12        # Keep 12 monthly backups (oldest in each month, default: 12)
+# Note: MIN_KEEP still applies as a safety floor with GFS enabled
 
 # Optional: S3-compatible off-site sync
 PG_BACKUP_OFFSITE_TYPE=s3
@@ -182,6 +191,7 @@ src/
 ├── manifest.ts         # Backup manifest with checksums
 ├── backup-service.ts   # Backup orchestrator
 ├── restore-service.ts  # Restore orchestrator
+├── gfs.ts              # GFS (Grandfather-Father-Son) tiered retention
 ├── prune.ts            # Retention policy
 ├── verify.ts           # Checksum verification
 ├── alerts.ts           # Email notifications

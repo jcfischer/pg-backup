@@ -134,7 +134,49 @@ export function classifyBackups(
     weeklyAssigned++;
   }
 
-  // Phase 3: Remaining backups are prunable (for now - monthly will be added later)
+  // Phase 3: Assign monthly tier to oldest backup in each month (up to monthly limit)
+  // Get remaining (non-daily, non-weekly) backups
+  const remainingForMonthly = sorted.filter((m) => !assigned.has(m.id));
+  const monthGroups = new Map<string, BackupManifest[]>();
+
+  for (const manifest of remainingForMonthly) {
+    const date = new Date(manifest.timestamp);
+    const monthKey = getMonthKey(date);
+
+    if (!monthGroups.has(monthKey)) {
+      monthGroups.set(monthKey, []);
+    }
+    monthGroups.get(monthKey)!.push(manifest);
+  }
+
+  // For each month, find the oldest backup (candidate for monthly promotion)
+  const monthlyCandidates: Array<{ monthKey: string; manifest: BackupManifest }> = [];
+  for (const [monthKey, backups] of monthGroups) {
+    // Sort by timestamp ascending (oldest first)
+    const sortedByTime = [...backups].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    monthlyCandidates.push({ monthKey, manifest: sortedByTime[0] });
+  }
+
+  // Sort monthly candidates by month (newest months first for retention priority)
+  monthlyCandidates.sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+
+  // Assign monthly tier up to the limit
+  let monthlyAssigned = 0;
+  for (const { monthKey, manifest } of monthlyCandidates) {
+    if (monthlyAssigned >= config.monthly) break;
+
+    result.push({
+      manifest,
+      tier: "monthly",
+      tierReason: `month ${monthKey}`,
+    });
+    assigned.add(manifest.id);
+    monthlyAssigned++;
+  }
+
+  // Phase 4: Remaining backups are prunable
   for (const manifest of sorted) {
     if (!assigned.has(manifest.id)) {
       result.push({
@@ -153,4 +195,47 @@ export function classifyBackups(
   );
 
   return result;
+}
+
+/**
+ * Get backups that should be pruned, respecting minKeep safety floor
+ *
+ * @param manifests - Array of backup manifests
+ * @param config - GFS configuration
+ * @param minKeep - Minimum number of backups to always keep
+ * @returns Array of TieredBackup that should be pruned
+ */
+export function getBackupsToPrune(
+  manifests: BackupManifest[],
+  config: GFSConfig,
+  minKeep: number
+): TieredBackup[] {
+  if (manifests.length === 0) {
+    return [];
+  }
+
+  // Get classification for all backups
+  const classified = classifyBackups(manifests, config);
+
+  // Get prunable backups
+  const prunable = classified.filter((t) => t.tier === "prunable");
+
+  // Get non-prunable count
+  const keepCount = classified.filter((t) => t.tier !== "prunable").length;
+
+  // Respect minKeep safety floor
+  // If we'd go below minKeep total, limit how many we prune
+  const totalBackups = manifests.length;
+  const maxToPrune = Math.max(0, totalBackups - minKeep);
+
+  // Prunable backups are already sorted newest first (from classifyBackups)
+  // We want to prune oldest first, so reverse the order for limiting
+  const prunableOldestFirst = [...prunable].sort(
+    (a, b) =>
+      new Date(a.manifest.timestamp).getTime() -
+      new Date(b.manifest.timestamp).getTime()
+  );
+
+  // Limit to maxToPrune
+  return prunableOldestFirst.slice(0, maxToPrune);
 }

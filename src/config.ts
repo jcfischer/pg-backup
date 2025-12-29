@@ -8,6 +8,7 @@ import type {
   OffsiteConfig,
   AlertConfig,
   SmtpConfig,
+  GFSConfig,
 } from "./types";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
@@ -86,6 +87,22 @@ function loadOffsiteConfig(): OffsiteConfig | undefined {
   return undefined;
 }
 
+function loadGFSConfig(): GFSConfig | undefined {
+  const enabled = getEnv("GFS_ENABLED");
+
+  // GFS is only loaded when explicitly enabled
+  if (!enabled || enabled.toLowerCase() !== "true") {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    daily: getEnvInt("GFS_DAILY", 7),
+    weekly: getEnvInt("GFS_WEEKLY", 4),
+    monthly: getEnvInt("GFS_MONTHLY", 12),
+  };
+}
+
 function loadAlertConfig(): AlertConfig | undefined {
   const email = getEnv("ALERT_EMAIL");
   const smtpHost = getEnv("SMTP_HOST");
@@ -133,6 +150,8 @@ export function loadConfig(): BackupConfig {
     ? directories.split(",").map((d) => d.trim())
     : fileConfig?.directories ?? [];
 
+  const gfsConfig = loadGFSConfig();
+
   const config: BackupConfig = {
     database: loadDatabaseConfig(),
     directories: dirList,
@@ -140,6 +159,7 @@ export function loadConfig(): BackupConfig {
     retention: {
       days: getEnvInt("RETENTION_DAYS", 30),
       minKeep: getEnvInt("MIN_KEEP", 7),
+      ...(gfsConfig && { gfs: gfsConfig }),
     },
     encryptionKey: getEnv("ENCRYPTION_KEY"),
     offsite: loadOffsiteConfig(),
@@ -166,6 +186,19 @@ export function validateConfig(config: BackupConfig): string[] {
     }
     if (!config.offsite.bucket) {
       errors.push("S3 bucket is required (PG_BACKUP_S3_BUCKET)");
+    }
+  }
+
+  // Validate GFS config if present
+  if (config.retention.gfs) {
+    if (config.retention.gfs.daily < 0) {
+      errors.push("GFS daily must be a non-negative integer");
+    }
+    if (config.retention.gfs.weekly < 0) {
+      errors.push("GFS weekly must be a non-negative integer");
+    }
+    if (config.retention.gfs.monthly < 0) {
+      errors.push("GFS monthly must be a non-negative integer");
     }
   }
 

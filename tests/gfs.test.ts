@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { getISOWeek, getMonthKey, classifyBackups } from "../src/gfs";
+import { getISOWeek, getMonthKey, classifyBackups, getBackupsToPrune } from "../src/gfs";
 import type { BackupManifest, GFSConfig } from "../src/types";
 
 describe("gfs", () => {
@@ -251,6 +251,293 @@ describe("gfs", () => {
         const promoted = result.find((r) => r.tier === "weekly");
         expect(promoted?.manifest.id).toBe("monday-early");
       });
+    });
+
+    describe("monthly tier promotion", () => {
+      it("should promote oldest backup in each month to monthly tier", () => {
+        // Create backups across multiple months
+        const manifests = [
+          createManifest("dec-new", "2025-12-28T12:00:00Z"),
+          createManifest("dec-old", "2025-12-01T12:00:00Z"), // Oldest in December
+          createManifest("nov-new", "2025-11-28T12:00:00Z"),
+          createManifest("nov-old", "2025-11-01T12:00:00Z"), // Oldest in November
+          createManifest("oct-old", "2025-10-15T12:00:00Z"), // Only one in October
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 0, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        // First should be daily
+        expect(result[0].tier).toBe("daily");
+
+        // Oldest in each month should be monthly
+        const decOldest = result.find((r) => r.manifest.id === "dec-old");
+        expect(decOldest?.tier).toBe("monthly");
+        expect(decOldest?.tierReason).toContain("2025-12");
+
+        const novOldest = result.find((r) => r.manifest.id === "nov-old");
+        expect(novOldest?.tier).toBe("monthly");
+        expect(novOldest?.tierReason).toContain("2025-11");
+
+        const octOldest = result.find((r) => r.manifest.id === "oct-old");
+        expect(octOldest?.tier).toBe("monthly");
+
+        // Others should be prunable
+        const novNew = result.find((r) => r.manifest.id === "nov-new");
+        expect(novNew?.tier).toBe("prunable");
+      });
+
+      it("should not exceed monthly retention count", () => {
+        // 15 backups across 15 months, but only keep 3 monthly
+        const manifests: BackupManifest[] = [];
+        for (let i = 0; i < 15; i++) {
+          const date = new Date("2025-12-15T12:00:00Z");
+          date.setMonth(date.getMonth() - i);
+          manifests.push(createManifest(`backup-${i}`, date.toISOString()));
+        }
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 0, monthly: 3 };
+        const result = classifyBackups(manifests, config);
+
+        const monthlyCount = result.filter((r) => r.tier === "monthly").length;
+        expect(monthlyCount).toBe(3);
+      });
+
+      it("should use oldest backup in month for promotion", () => {
+        // Multiple backups in same month
+        const manifests = [
+          createManifest("mid-month", "2025-12-15T12:00:00Z"),
+          createManifest("start-month", "2025-12-01T12:00:00Z"), // Should be promoted
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 0, weekly: 0, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        const promoted = result.find((r) => r.tier === "monthly");
+        expect(promoted?.manifest.id).toBe("start-month");
+      });
+
+      it("should handle backups already promoted to weekly", () => {
+        // Weekly gets priority over monthly for same backup
+        const manifests = [
+          createManifest("w52-dec", "2025-12-22T12:00:00Z"), // Oldest in week 52, also oldest in Dec
+          createManifest("w51-dec", "2025-12-15T12:00:00Z"), // Week 51, in December
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 0, weekly: 2, monthly: 2 };
+        const result = classifyBackups(manifests, config);
+
+        // Both should be weekly (one per week)
+        expect(result.filter((r) => r.tier === "weekly").length).toBe(2);
+
+        // Monthly should not double-count a weekly backup
+        expect(result.filter((r) => r.tier === "monthly").length).toBe(0);
+      });
+    });
+
+    describe("prunable classification", () => {
+      it("should mark backups exceeding all tier limits as prunable", () => {
+        // 10 backups, but only 2 daily + 1 weekly + 1 monthly = 4 kept
+        const manifests: BackupManifest[] = [];
+        for (let i = 0; i < 10; i++) {
+          const date = new Date("2025-12-29T12:00:00Z");
+          date.setDate(date.getDate() - i * 3); // Every 3 days
+          manifests.push(createManifest(`backup-${i}`, date.toISOString()));
+        }
+
+        const config: GFSConfig = { enabled: true, daily: 2, weekly: 1, monthly: 1 };
+        const result = classifyBackups(manifests, config);
+
+        const prunable = result.filter((r) => r.tier === "prunable");
+        expect(prunable.length).toBeGreaterThan(0);
+
+        // Verify prunable backups have correct reason
+        for (const p of prunable) {
+          expect(p.tierReason).toBe("exceeds retention");
+        }
+      });
+
+      it("should not mark any backups as prunable when all fit in tiers", () => {
+        const manifests = [
+          createManifest("backup-1", "2025-12-29T12:00:00Z"),
+          createManifest("backup-2", "2025-12-28T12:00:00Z"),
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 5, weekly: 4, monthly: 12 };
+        const result = classifyBackups(manifests, config);
+
+        const prunable = result.filter((r) => r.tier === "prunable");
+        expect(prunable.length).toBe(0);
+      });
+
+      it("should mark all backups as prunable when all tier counts are zero", () => {
+        const manifests = [
+          createManifest("backup-1", "2025-12-29T12:00:00Z"),
+          createManifest("backup-2", "2025-12-28T12:00:00Z"),
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 0, weekly: 0, monthly: 0 };
+        const result = classifyBackups(manifests, config);
+
+        expect(result.every((r) => r.tier === "prunable")).toBe(true);
+      });
+    });
+
+    describe("tier priority rules", () => {
+      it("should not double-count daily backups as weekly", () => {
+        // A backup in daily tier should not also appear as weekly
+        const manifests = [
+          createManifest("newest", "2025-12-29T12:00:00Z"), // Will be daily, also oldest in its week
+          createManifest("older", "2025-12-22T12:00:00Z"), // Different week
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 2, monthly: 0 };
+        const result = classifyBackups(manifests, config);
+
+        // First should be daily
+        expect(result.find((r) => r.manifest.id === "newest")?.tier).toBe("daily");
+
+        // Second should be weekly (oldest in its week)
+        expect(result.find((r) => r.manifest.id === "older")?.tier).toBe("weekly");
+
+        // Total should be 2 (no duplicates)
+        expect(result.length).toBe(2);
+      });
+
+      it("should not double-count daily backups as monthly", () => {
+        // A backup in daily tier should not also appear as monthly
+        const manifests = [
+          createManifest("newest", "2025-12-01T12:00:00Z"), // Will be daily, also oldest in December
+          createManifest("older", "2025-11-15T12:00:00Z"), // Different month
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 1, weekly: 0, monthly: 2 };
+        const result = classifyBackups(manifests, config);
+
+        // First should be daily
+        expect(result.find((r) => r.manifest.id === "newest")?.tier).toBe("daily");
+
+        // Second should be monthly (oldest in November)
+        expect(result.find((r) => r.manifest.id === "older")?.tier).toBe("monthly");
+
+        // Total should be 2 (no duplicates)
+        expect(result.length).toBe(2);
+      });
+
+      it("should assign each backup to exactly one tier", () => {
+        // Complex scenario with overlapping periods
+        const manifests = [
+          createManifest("a", "2025-12-29T12:00:00Z"), // Newest - daily
+          createManifest("b", "2025-12-28T12:00:00Z"), // Daily
+          createManifest("c", "2025-12-22T12:00:00Z"), // Oldest in week 52 - weekly
+          createManifest("d", "2025-12-15T12:00:00Z"), // Oldest in week 51 - weekly
+          createManifest("e", "2025-12-01T12:00:00Z"), // Oldest in Dec (but earlier weeks taken) - monthly
+          createManifest("f", "2025-11-01T12:00:00Z"), // Oldest in Nov - monthly
+        ];
+
+        const config: GFSConfig = { enabled: true, daily: 2, weekly: 2, monthly: 2 };
+        const result = classifyBackups(manifests, config);
+
+        // Each backup should appear exactly once
+        expect(result.length).toBe(manifests.length);
+
+        // Verify tier assignments
+        expect(result.find((r) => r.manifest.id === "a")?.tier).toBe("daily");
+        expect(result.find((r) => r.manifest.id === "b")?.tier).toBe("daily");
+        expect(result.find((r) => r.manifest.id === "c")?.tier).toBe("weekly");
+        expect(result.find((r) => r.manifest.id === "d")?.tier).toBe("weekly");
+        expect(result.find((r) => r.manifest.id === "e")?.tier).toBe("monthly");
+        expect(result.find((r) => r.manifest.id === "f")?.tier).toBe("monthly");
+      });
+    });
+  });
+
+  describe("getBackupsToPrune", () => {
+    const defaultConfig: GFSConfig = {
+      enabled: true,
+      daily: 7,
+      weekly: 4,
+      monthly: 12,
+    };
+
+    it("should return all prunable backups", () => {
+      // 10 backups, daily: 2, weekly: 1, monthly: 1
+      const manifests: BackupManifest[] = [];
+      for (let i = 0; i < 10; i++) {
+        const date = new Date("2025-12-29T12:00:00Z");
+        date.setDate(date.getDate() - i * 3);
+        manifests.push(createManifest(`backup-${i}`, date.toISOString()));
+      }
+
+      const config: GFSConfig = { enabled: true, daily: 2, weekly: 1, monthly: 1 };
+      const toPrune = getBackupsToPrune(manifests, config, 0);
+
+      // Should return only prunable backups
+      expect(toPrune.length).toBeGreaterThan(0);
+      expect(toPrune.every((t) => t.tier === "prunable")).toBe(true);
+    });
+
+    it("should respect minKeep safety floor", () => {
+      // 10 backups, all tiers = 0 (all prunable), but minKeep = 5
+      const manifests: BackupManifest[] = [];
+      for (let i = 0; i < 10; i++) {
+        const date = new Date("2025-12-29T12:00:00Z");
+        date.setDate(date.getDate() - i);
+        manifests.push(createManifest(`backup-${i}`, date.toISOString()));
+      }
+
+      const config: GFSConfig = { enabled: true, daily: 0, weekly: 0, monthly: 0 };
+      const toPrune = getBackupsToPrune(manifests, config, 5);
+
+      // Should only prune 5 (10 - minKeep)
+      expect(toPrune.length).toBe(5);
+    });
+
+    it("should not prune any backups when below minKeep", () => {
+      const manifests = [
+        createManifest("backup-1", "2025-12-29T12:00:00Z"),
+        createManifest("backup-2", "2025-12-28T12:00:00Z"),
+        createManifest("backup-3", "2025-12-27T12:00:00Z"),
+      ];
+
+      const config: GFSConfig = { enabled: true, daily: 0, weekly: 0, monthly: 0 };
+      const toPrune = getBackupsToPrune(manifests, config, 5);
+
+      // minKeep is 5, we only have 3, so nothing to prune
+      expect(toPrune.length).toBe(0);
+    });
+
+    it("should return empty array when no backups are prunable", () => {
+      const manifests = [
+        createManifest("backup-1", "2025-12-29T12:00:00Z"),
+        createManifest("backup-2", "2025-12-28T12:00:00Z"),
+      ];
+
+      const config: GFSConfig = { enabled: true, daily: 5, weekly: 4, monthly: 12 };
+      const toPrune = getBackupsToPrune(manifests, config, 0);
+
+      expect(toPrune.length).toBe(0);
+    });
+
+    it("should return empty array for empty input", () => {
+      const toPrune = getBackupsToPrune([], defaultConfig, 0);
+      expect(toPrune).toEqual([]);
+    });
+
+    it("should keep newest backups when minKeep applies", () => {
+      // All backups are prunable, minKeep should keep the newest ones
+      const manifests = [
+        createManifest("old", "2025-12-20T12:00:00Z"),
+        createManifest("newer", "2025-12-25T12:00:00Z"),
+        createManifest("newest", "2025-12-29T12:00:00Z"),
+      ];
+
+      const config: GFSConfig = { enabled: true, daily: 0, weekly: 0, monthly: 0 };
+      const toPrune = getBackupsToPrune(manifests, config, 2);
+
+      // Should only prune 1 (oldest), keep 2 newest
+      expect(toPrune.length).toBe(1);
+      expect(toPrune[0].manifest.id).toBe("old");
     });
   });
 });
