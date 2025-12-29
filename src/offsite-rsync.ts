@@ -149,8 +149,9 @@ export async function syncDirectoryToRemote(
   const sshOptions = buildSshOptions(config);
 
   try {
-    // Ensure trailing slash on local dir to sync contents
-    const sourceDir = localDir.endsWith("/") ? localDir : `${localDir}/`;
+    // No trailing slash on source - this preserves the directory name on the target
+    // e.g., syncing /backup/backup-2025-12-29/ creates target/backup-2025-12-29/
+    const sourceDir = localDir.endsWith("/") ? localDir.slice(0, -1) : localDir;
 
     const result = await $`rsync -avz --stats ${sshOptions} ${sourceDir} ${target}/`.quiet();
 

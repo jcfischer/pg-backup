@@ -4,7 +4,7 @@
  */
 
 import { existsSync } from "fs";
-import { mkdir, readdir } from "fs/promises";
+import { mkdir, readdir, unlink } from "fs/promises";
 import { join, basename } from "path";
 import type {
   BackupConfig,
@@ -17,7 +17,7 @@ import { dumpDatabase, checkPgDumpAvailable, type DumpResult } from "./database"
 import { archiveDirectory, type ArchiveResult } from "./directories";
 import { encryptFile, checkGpgAvailable } from "./encryption";
 import { syncToS3 } from "./offsite-s3";
-import { syncFilesToRemote } from "./offsite-rsync";
+import { syncDirectoryToRemote } from "./offsite-rsync";
 import { createManifest, saveManifest, calculateChecksum } from "./manifest";
 
 /**
@@ -148,6 +148,8 @@ export async function runBackup(config: BackupConfig): Promise<BackupResult> {
                 dir.checksum = await calculateChecksum(encryptedPath);
               }
             }
+            // Delete original unencrypted file after successful encryption
+            await unlink(file);
           } else {
             errors.push(`Encryption failed for ${file}: ${result.error}`);
             encryptedFiles.push(file); // Keep unencrypted file in sync list
@@ -165,8 +167,56 @@ export async function runBackup(config: BackupConfig): Promise<BackupResult> {
     }
   }
 
-  // Step 4: Offsite sync (if configured)
+  // Calculate duration
+  const duration = Math.round((Date.now() - startTime) / 1000);
+
+  // Determine success status
+  // Success if database dump succeeded (or no database errors for directory-only backup)
+  const databaseSuccess = databaseResult?.success ?? false;
+  const hasDirectories = config.directories.length > 0;
+  const directorySuccess = !hasDirectories || directoryResults.length > 0;
+
+  // Backup is successful if database succeeded
+  // (directories are optional - we continue even if some fail)
+  const success = databaseSuccess;
+
+  // Determine status (before offsite sync)
+  let status: "complete" | "failed" | "partial";
+  if (success && errors.length === 0) {
+    status = "complete";
+  } else if (!success) {
+    status = "failed";
+  } else {
+    status = "partial"; // Some non-critical errors
+  }
+
+  // Step 4: Create and save manifest BEFORE offsite sync
+  // This ensures manifest is included in the sync
   let offsiteResult: { synced: boolean; syncedAt?: string; type?: "rsync" | "s3" } | undefined;
+
+  const manifest = createManifest({
+    databaseName: config.database.name,
+    databaseSize: databaseResult?.size ?? 0,
+    databaseChecksum,
+    tableCount: databaseResult?.tableCount,
+    directories: directoryResults,
+    encrypted,
+    duration,
+    status,
+    offsite: offsiteResult, // Will be undefined initially
+  });
+
+  // Override generated ID with our consistent one
+  (manifest as BackupManifest).id = backupId;
+
+  try {
+    // saveManifest expects the base backup dir and creates subdirectory based on manifest.id
+    await saveManifest(config.backupDir, manifest);
+  } catch (error) {
+    errors.push(`Failed to save manifest: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  // Step 5: Offsite sync (if configured) - sync entire backup directory
   if (config.offsite) {
     if (config.offsite.type === "s3") {
       try {
@@ -187,7 +237,8 @@ export async function runBackup(config: BackupConfig): Promise<BackupResult> {
     } else if (config.offsite.type === "rsync") {
       try {
         const rsyncConfig = config.offsite as RsyncOffsiteConfig;
-        const result = await syncFilesToRemote(rsyncConfig, filesToSync);
+        // Sync entire backup directory to preserve structure (backup-YYYY-MM-DD/*)
+        const result = await syncDirectoryToRemote(rsyncConfig, backupPath);
         offsiteResult = {
           synced: result.success,
           syncedAt: result.success ? new Date().toISOString() : undefined,
@@ -203,49 +254,14 @@ export async function runBackup(config: BackupConfig): Promise<BackupResult> {
     }
   }
 
-  // Calculate duration
-  const duration = Math.round((Date.now() - startTime) / 1000);
-
-  // Determine success status
-  // Success if database dump succeeded (or no database errors for directory-only backup)
-  const databaseSuccess = databaseResult?.success ?? false;
-  const hasDirectories = config.directories.length > 0;
-  const directorySuccess = !hasDirectories || directoryResults.length > 0;
-
-  // Backup is successful if database succeeded
-  // (directories are optional - we continue even if some fail)
-  const success = databaseSuccess;
-
-  // Determine status
-  let status: "complete" | "failed" | "partial";
-  if (success && errors.length === 0) {
-    status = "complete";
-  } else if (!success) {
-    status = "failed";
-  } else {
-    status = "partial"; // Some non-critical errors
-  }
-
-  // Step 5: Create and save manifest
-  const manifest = createManifest({
-    databaseName: config.database.name,
-    databaseSize: databaseResult?.size ?? 0,
-    databaseChecksum,
-    tableCount: databaseResult?.tableCount,
-    directories: directoryResults,
-    encrypted,
-    duration,
-    status,
-    offsite: offsiteResult,
-  });
-
-  // Override generated ID with our consistent one
-  (manifest as BackupManifest).id = backupId;
-
-  try {
-    await saveManifest(config.backupDir, manifest);
-  } catch (error) {
-    errors.push(`Failed to save manifest: ${error instanceof Error ? error.message : String(error)}`);
+  // Update manifest with offsite result and save again
+  if (offsiteResult) {
+    (manifest as BackupManifest).offsite = offsiteResult;
+    try {
+      await saveManifest(config.backupDir, manifest);
+    } catch (error) {
+      // Non-critical - manifest update failed but backup succeeded
+    }
   }
 
   return {
