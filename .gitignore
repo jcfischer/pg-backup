@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 pg-backup
+pg-backup-linux
 *.exe
 
 # Environment files with secrets
