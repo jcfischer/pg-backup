@@ -10,7 +10,7 @@ User={{ pg_backup_user }}
 Group={{ pg_backup_group }}
 
 # Load environment from config file
-EnvironmentFile=-/etc/pg-backup/pg-backup.env
+EnvironmentFile=/etc/pg-backup/pg-backup.env
 
 # Run backup
 ExecStart={{ pg_backup_bin_path }} backup
@@ -18,17 +18,8 @@ ExecStart={{ pg_backup_bin_path }} backup
 # Allow up to 2 hours for large backups
 TimeoutStartSec=7200
 
-# Security hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
+# Minimal security - directory backups need full /home access via ACL
 ReadWritePaths={{ pg_backup_dir }}
-{% if pg_backup_directories %}
-{% for dir in pg_backup_directories.split(',') %}
-ReadOnlyPaths={{ dir | trim }}
-{% endfor %}
-{% endif %}
 
 [Install]
 WantedBy=multi-user.target
