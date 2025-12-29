@@ -3,6 +3,8 @@
  * Implements tiered backup retention with daily, weekly, and monthly tiers
  */
 
+import type { BackupManifest, GFSConfig, TieredBackup } from "./types";
+
 /**
  * Get ISO 8601 week number for a date (UTC)
  * Week 1 contains first Thursday of year, weeks start Monday
@@ -45,4 +47,57 @@ export function getMonthKey(date: Date): string {
   const year = date.getUTCFullYear();
   const month = (date.getUTCMonth() + 1).toString().padStart(2, "0");
   return `${year}-${month}`;
+}
+
+/**
+ * Classify backups into GFS tiers
+ * Pure function - same inputs always produce same outputs
+ *
+ * Algorithm:
+ * 1. Sort all backups by timestamp (newest first)
+ * 2. Mark the newest N backups as "daily" (N = daily retention count)
+ * 3. Group remaining backups by ISO week; mark oldest in each week as "weekly"
+ * 4. Group remaining backups by month; mark oldest in each month as "monthly"
+ * 5. All unclassified backups are "prunable"
+ *
+ * @param manifests - Array of backup manifests to classify
+ * @param config - GFS configuration
+ * @returns Array of TieredBackup with tier assignments
+ */
+export function classifyBackups(
+  manifests: BackupManifest[],
+  config: GFSConfig
+): TieredBackup[] {
+  if (manifests.length === 0) {
+    return [];
+  }
+
+  // Sort by timestamp, newest first
+  const sorted = [...manifests].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  const result: TieredBackup[] = [];
+
+  // Phase 1: Assign daily tier to newest N backups
+  for (let i = 0; i < sorted.length; i++) {
+    const manifest = sorted[i];
+
+    if (i < config.daily) {
+      result.push({
+        manifest,
+        tier: "daily",
+        tierReason: `newest ${config.daily}`,
+      });
+    } else {
+      // Placeholder for further classification (weekly/monthly/prunable)
+      result.push({
+        manifest,
+        tier: "prunable",
+        tierReason: "exceeds retention",
+      });
+    }
+  }
+
+  return result;
 }

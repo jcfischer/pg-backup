@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { getISOWeek, getMonthKey } from "../src/gfs";
+import { getISOWeek, getMonthKey, classifyBackups } from "../src/gfs";
+import type { BackupManifest, GFSConfig } from "../src/types";
 
 describe("gfs", () => {
   describe("getISOWeek", () => {
@@ -103,6 +104,87 @@ describe("gfs", () => {
 
       expect(getMonthKey(dec)).toBe("2025-12");
       expect(getMonthKey(jan)).toBe("2026-01");
+    });
+  });
+
+  // Helper to create test manifests
+  function createManifest(id: string, timestamp: string): BackupManifest {
+    return {
+      id,
+      timestamp,
+      version: "0.1.0",
+      database: { name: "testdb", size: 1000, checksum: "abc123" },
+      directories: [],
+      encrypted: false,
+      status: "complete",
+      duration: 60,
+    };
+  }
+
+  describe("classifyBackups", () => {
+    const defaultConfig: GFSConfig = {
+      enabled: true,
+      daily: 7,
+      weekly: 4,
+      monthly: 12,
+    };
+
+    describe("daily tier assignment", () => {
+      it("should mark newest N backups as daily tier", () => {
+        const manifests = [
+          createManifest("backup-1", "2025-12-29T12:00:00Z"),
+          createManifest("backup-2", "2025-12-28T12:00:00Z"),
+          createManifest("backup-3", "2025-12-27T12:00:00Z"),
+        ];
+
+        const config: GFSConfig = { ...defaultConfig, daily: 2 };
+        const result = classifyBackups(manifests, config);
+
+        expect(result[0].tier).toBe("daily");
+        expect(result[0].tierReason).toContain("newest");
+        expect(result[1].tier).toBe("daily");
+        expect(result[2].tier).not.toBe("daily");
+      });
+
+      it("should handle fewer backups than daily count", () => {
+        const manifests = [
+          createManifest("backup-1", "2025-12-29T12:00:00Z"),
+          createManifest("backup-2", "2025-12-28T12:00:00Z"),
+        ];
+
+        const config: GFSConfig = { ...defaultConfig, daily: 7 };
+        const result = classifyBackups(manifests, config);
+
+        expect(result[0].tier).toBe("daily");
+        expect(result[1].tier).toBe("daily");
+        expect(result.length).toBe(2);
+      });
+
+      it("should sort manifests by timestamp before classification", () => {
+        // Provide out of order
+        const manifests = [
+          createManifest("backup-old", "2025-12-27T12:00:00Z"),
+          createManifest("backup-new", "2025-12-29T12:00:00Z"),
+          createManifest("backup-mid", "2025-12-28T12:00:00Z"),
+        ];
+
+        const config: GFSConfig = { ...defaultConfig, daily: 2 };
+        const result = classifyBackups(manifests, config);
+
+        // Should be sorted newest first
+        expect(result[0].manifest.id).toBe("backup-new");
+        expect(result[1].manifest.id).toBe("backup-mid");
+        expect(result[2].manifest.id).toBe("backup-old");
+
+        // Newest 2 should be daily
+        expect(result[0].tier).toBe("daily");
+        expect(result[1].tier).toBe("daily");
+      });
+
+      it("should return empty array for empty input", () => {
+        const result = classifyBackups([], defaultConfig);
+        expect(result).toEqual([]);
+      });
     });
   });
 });
